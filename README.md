@@ -9,7 +9,7 @@ pkg install git -y
 pkg install python -y
 ```
 ```
-git clone https://github.com/ALAMIN-2K07/WIFI-HACK
+git clone https://github.com/ALAMIN2K7/WIFI-HACK
 ```
 ```
 cd WIFI-HACK

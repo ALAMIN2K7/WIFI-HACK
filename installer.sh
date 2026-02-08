@@ -19,7 +19,7 @@ pkg install -y git tsu python wpa-supplicant pixiewps iw
 chmod +x oneshot.py
 
 # Auto-install main script (if not already run from curl)
-#curl -sSf https://raw.githubusercontent.com/ALAMIN-2K07/WIFI-HACK/main/installer.sh | bash
+#curl -sSf https://raw.githubusercontent.com/ALAMIN2K7/WIFI-HACK/main/installer.sh | bash
 
 # Copy wifihack.sh to Termux home directory
 cp wifihack.sh /data/data/com.termux/files/home/

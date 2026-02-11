@@ -1,2 +1,2 @@
 cd WIFI-HACK
-sudo python Hack.py -i wlan0 -K
+sudo python hack.py -i wlan0 -K

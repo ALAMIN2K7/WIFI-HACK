@@ -1027,7 +1027,7 @@ class WiFiScanner:
             return
         while 1:
             try:
-                networkNo = input('[✓] Select target (press Enter to refresh ⟳): \n')
+                networkNo = input('[✓] Select target (press Enter to refresh ⟳):')
                 if networkNo.lower() in ('r', '0', ''):
                     return self.prompt_network()
                 elif int(networkNo) in networks.keys():

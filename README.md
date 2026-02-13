@@ -15,19 +15,7 @@ git clone https://github.com/ALAMIN2K7/WIFI-HACK
 cd WIFI-HACK
 ```
 ```
-ls
-```
-```
-chmod +x hack.py
-```
-```
-ls
-```
-```
 bash installer.sh
-```
-```
-cd WIFI-HACK
 ```
 ```
 ls
@@ -96,7 +84,7 @@ When giving the last command, you need to turn off WiFi and data connection and 
 ## Usage examples
 Start Pixie Dust attack on a specified BSSID:
  ```
- sudo python3 hack.py -i wlan0 -b 00:90:4C:C1:AC:21 -K
+ sudo python3 hack.py -i wlan0 -b [BSSID] -K
  ```
 Show avaliable networks and start Pixie Dust attack on a specified network:
  ```
@@ -104,7 +92,7 @@ Show avaliable networks and start Pixie Dust attack on a specified network:
  ```
 Launch online WPS bruteforce with the specified first half of the PIN:
  ```
- sudo python3 hack.py -i wlan0 -b 00:90:4C:C1:AC:21 -B -p 1234
+ sudo python3 hack.py -i wlan0 -b [BSSID] -B -p 1234
  ```
  Start WPS push button connection:s
  ```
@@ -117,4 +105,4 @@ Launch online WPS bruteforce with the specified first half of the PIN:
 #### "Device or resource busy (-16)"
  Try disabling Wi-Fi in the system settings and kill the Network manager. Alternatively, you can try running hack with ```--iface-down``` argument.
 #### The wlan0 interface disappears when Wi-Fi is disabled on Android devices with MediaTek SoC
- Try running hack with the `--mtk-wifi` flag to initialize Wi-Fi device driver.
+ Try running  with the `--mtk-wifi` flag to initialize Wi-Fi device driver.
